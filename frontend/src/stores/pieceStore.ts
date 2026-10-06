@@ -13,6 +13,7 @@ import {
   countAll,
   db,
   initDatabase,
+  normalizeStepStates,
   putPiece,
   putStep,
   removePiece,
@@ -20,7 +21,7 @@ import {
   reorderSteps,
   syncPieceState,
 } from '../utils/db'
-import { buildStepProgress, type StepProgress } from '../hooks/useStepProgress'
+import { buildStepProgress, describeStepBlock, normalizeOrderedStates, type StepProgress } from '../hooks/useStepProgress'
 import { nowIso, uuid } from '../utils/id'
 
 /** 作品筛选条件 */
@@ -210,7 +211,13 @@ export const usePieceStore = defineStore('piece', () => {
       revision: ROW_REVISION,
     }
     await putStep(row)
+    // 新工序若插在未完成道次附近，可能使已完成道次越序，按前缀不变式归一化
+    const resetCount = await normalizeStepStates(draft.pieceId)
     revision.value += 1
+    lastMessage.value =
+      resetCount > 0
+        ? `已新增第 ${draft.seq} 道「${draft.name}」；${resetCount} 道已完成工序因排在未完成工序之后，已退回「未开始」`
+        : `已新增第 ${draft.seq} 道「${draft.name}」`
     return row
   }
 
@@ -227,7 +234,13 @@ export const usePieceStore = defineStore('piece', () => {
       remark: draft.remark.trim(),
       state: draft.state,
     })
+    // 编辑序号 / 状态后同样按前缀归一化，避免越序已完成造成完成度虚高
+    const resetCount = await normalizeStepStates(existing.pieceId)
     revision.value += 1
+    lastMessage.value =
+      resetCount > 0
+        ? `工序已更新；${resetCount} 道已完成工序因排在未完成工序之后，已退回「未开始」，请按顺序重新确认`
+        : '工序已更新'
   }
 
   async function deleteStep(stepId: string): Promise<void> {
@@ -236,15 +249,25 @@ export const usePieceStore = defineStore('piece', () => {
     lastMessage.value = '工序已删除，作品状态已重新推导'
   }
 
-  /** 推进工序状态：未开始 → 进行中 → 已完成 */
-  async function advanceStep(stepId: string): Promise<void> {
+  /**
+   * 推进工序状态：未开始 → 进行中 → 已完成。
+   * 必须按顺序推进：前面任一道未完成则拒绝并写明卡在第几道，返回 false。
+   */
+  async function advanceStep(stepId: string): Promise<boolean> {
     const existing = steps.value.find((row) => row.id === stepId)
-    if (existing === undefined) return
+    if (existing === undefined) return false
     const flow: Step['state'][] = ['未开始', '进行中', '已完成']
     const index = flow.indexOf(existing.state)
     if (index < 0 || index >= flow.length - 1) {
       lastMessage.value = '该工序已处于「已完成」状态'
-      return
+      return false
+    }
+    const list = stepsOf(existing.pieceId)
+    const targetIndex = list.findIndex((row) => row.id === stepId)
+    const blocker = describeStepBlock(list, targetIndex)
+    if (blocker !== null) {
+      lastMessage.value = `第 ${existing.seq} 道「${existing.name}」已退回：前序第 ${blocker.seq} 道「${blocker.name}」尚未完成（当前状态：${blocker.state}），请先完成第 ${blocker.seq} 道`
+      return false
     }
     const next = flow[index + 1]
     await putStep({ ...existing, state: next })
@@ -253,9 +276,14 @@ export const usePieceStore = defineStore('piece', () => {
     lastMessage.value = `第 ${existing.seq} 道「${existing.name}」已推进为「${next}」${
       piece === undefined ? '' : `（作品：${piece.name}）`
     }`
+    return true
   }
 
-  /** 拖拽排序：把 fromId 移动到 toId 之前 */
+  /**
+   * 拖拽排序：把 fromId 移动到 toId 之前。
+   * 序号按新顺序重写；被甩到未完成工序之后的已完成工序退回「未开始」，
+   * 完成度、当前道次与退火放行随即按新顺序重算。
+   */
   async function moveStepBefore(pieceId: string, fromId: string, toId: string): Promise<void> {
     if (fromId === toId) return
     const list = stepsOf(pieceId)
@@ -264,12 +292,20 @@ export const usePieceStore = defineStore('piece', () => {
     if (fromIndex < 0 || toIndex < 0) return
     const [moved] = list.splice(fromIndex, 1)
     list.splice(toIndex, 0, moved)
-    await reorderSteps(list.map((row) => row.id))
+    const nextStates = normalizeOrderedStates(list)
+    const resetIds = list.filter((row, index) => nextStates[index] !== row.state).map((row) => row.id)
+    await reorderSteps(
+      list.map((row) => row.id),
+      resetIds,
+    )
     revision.value += 1
-    lastMessage.value = `已调整工序顺序：「${moved.name}」移动到第 ${toIndex + 1} 道`
+    lastMessage.value =
+      resetIds.length > 0
+        ? `已调整工序顺序：「${moved.name}」移动到第 ${toIndex + 1} 道；${resetIds.length} 道已完成工序排在未完成工序之后，已退回「未开始」，请按新顺序重新确认`
+        : `已调整工序顺序：「${moved.name}」移动到第 ${toIndex + 1} 道`
   }
 
-  /** 按序号升序重排（拖拽置顶/置底等场景） */
+  /** 按序号升序重排（拖拽置顶/置底等场景）；状态同样按前缀不变式归一化 */
   async function moveStepToIndex(pieceId: string, stepId: string, targetIndex: number): Promise<void> {
     const list = stepsOf(pieceId)
     const fromIndex = list.findIndex((row) => row.id === stepId)
@@ -277,9 +313,17 @@ export const usePieceStore = defineStore('piece', () => {
     const [moved] = list.splice(fromIndex, 1)
     const index = Math.max(0, Math.min(list.length, targetIndex))
     list.splice(index, 0, moved)
-    await reorderSteps(list.map((row) => row.id))
+    const nextStates = normalizeOrderedStates(list)
+    const resetIds = list.filter((row, i) => nextStates[i] !== row.state).map((row) => row.id)
+    await reorderSteps(
+      list.map((row) => row.id),
+      resetIds,
+    )
     revision.value += 1
-    lastMessage.value = `已把「${moved.name}」调整到第 ${index + 1} 道`
+    lastMessage.value =
+      resetIds.length > 0
+        ? `已把「${moved.name}」调整到第 ${index + 1} 道；${resetIds.length} 道已完成工序排在未完成工序之后，已退回「未开始」`
+        : `已把「${moved.name}」调整到第 ${index + 1} 道`
   }
 
   /** 依工序与退火记录重新推导作品状态 */

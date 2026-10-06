@@ -11,6 +11,7 @@ import type { Step } from '../types/step'
 import type { Anneal } from '../types/anneal'
 import type { Inspect } from '../types/inspect'
 import { stampSuffix } from './id'
+import { buildStepProgress } from '../hooks/useStepProgress'
 import { formatHours, isLowRemain, segmentHours, totalAnnealHours } from './thermal'
 
 /** 触发浏览器下载 */
@@ -109,6 +110,7 @@ export function buildScheduleCsv(
     const batch = batches.find((row) => row.id === piece.batchId)
     const furnace = furnaces.find((row) => row.id === batch?.furnaceId)
     const pieceSteps = steps.filter((row) => row.pieceId === piece.id).sort((a, b) => a.seq - b.seq)
+    const pieceProgress = buildStepProgress(piece.id, steps)
     const pieceAnneals = anneals.filter((row) => row.pieceId === piece.id)
     const latestAnneal = pieceAnneals.length > 0 ? pieceAnneals[pieceAnneals.length - 1] : null
     const pieceInspects = inspects.filter((row) => row.pieceId === piece.id).sort((a, b) => a.date.localeCompare(b.date))
@@ -124,7 +126,7 @@ export function buildScheduleCsv(
         batch?.colorCode ?? '—',
         furnace?.code ?? '—',
         pieceSteps.length,
-        pieceSteps.filter((row) => row.state === '已完成').length,
+        pieceProgress.done,
         Math.round(pieceSteps.reduce((acc, row) => acc + row.durationMin, 0) * 10) / 10,
         pieceAnneals.length,
         latestAnneal?.kilnSlot ?? '—',

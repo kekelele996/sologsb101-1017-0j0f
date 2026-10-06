@@ -12,6 +12,7 @@ import {
   ROW_REVISION,
   advanceAnnealState,
   db,
+  getStepGateReason,
   initDatabase,
   putAnneal,
   removeAnneal,
@@ -174,7 +175,18 @@ export const useAnnealStore = defineStore('anneal', () => {
     Object.assign(filters, { ...EMPTY_FILTERS })
   }
 
+  /** 工序闸门：该作品还有未完成工序时给出停滞道次描述，空串表示放行 */
+  async function stepGateOf(pieceId: string): Promise<string> {
+    if (pieceId === '') return '请选择作品'
+    return getStepGateReason(pieceId)
+  }
+
   async function createAnneal(draft: AnnealDraft): Promise<Anneal | null> {
+    const gate = await stepGateOf(draft.pieceId)
+    if (gate !== '') {
+      lastMessage.value = `无法安排退火窑位：${gate}`
+      return null
+    }
     const conflict = conflictOf({
       id: '',
       kilnSlot: draft.kilnSlot,
@@ -207,6 +219,11 @@ export const useAnnealStore = defineStore('anneal', () => {
   }
 
   async function updateAnneal(annealId: string, draft: AnnealDraft): Promise<boolean> {
+    const gate = await stepGateOf(draft.pieceId)
+    if (gate !== '') {
+      lastMessage.value = `无法安排退火窑位：${gate}`
+      return false
+    }
     const conflict = conflictOf({
       id: annealId,
       kilnSlot: draft.kilnSlot,
@@ -272,6 +289,7 @@ export const useAnnealStore = defineStore('anneal', () => {
     visibleAnneals,
     wallThicknessOf,
     conflictOf,
+    stepGateOf,
     durationOf,
     loadAll,
     setFilters,

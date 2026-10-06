@@ -82,6 +82,14 @@ const formDuration = computed(() => {
   }
 })
 
+/** 所选作品的工序闸门：工序未按顺序全部完成时，排位必须拦下 */
+const stepGate = computed(() => {
+  if (form.pieceId === '') return { blocked: true, reason: '请先选择作品' }
+  const progress = pieceStore.progressOf(form.pieceId)
+  if (progress.total === 0) return { blocked: true, reason: '尚未登记任何吹制工序' }
+  return progress.allDone ? { blocked: false, reason: '' } : { blocked: true, reason: progress.blockReason }
+})
+
 const stats = computed(() => ({
   total: annealStore.anneals.length,
   waiting: annealStore.anneals.filter((row) => row.state === '待入窑').length,
@@ -97,8 +105,12 @@ onMounted(() => {
 
 function openCreate(): void {
   editingId.value = null
+  const preferred =
+    pieceStore.pieces.find((item) => item.id === pieceStore.currentPieceId && pieceStore.progressOf(item.id).allDone) ??
+    pieceStore.pieces.find((item) => pieceStore.progressOf(item.id).allDone) ??
+    null
   Object.assign(form, {
-    pieceId: pieceStore.currentPieceId ?? pieceStore.pieces[0]?.id ?? '',
+    pieceId: preferred?.id ?? '',
     kilnSlot: slotOptions.value[0] ?? 'AN-01-A1',
     curveSeg: '缓冷' as CurveSeg,
     inAt: nowLocalInput(),
@@ -125,6 +137,10 @@ async function handleSubmit(): Promise<void> {
   if (formRef.value === undefined) return
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
+  if (stepGate.value.blocked) {
+    ElMessage.error(`无法安排退火窑位：${stepGate.value.reason}`)
+    return
+  }
   if (conflict.value.conflict) {
     ElMessage.error(conflict.value.message)
     return
@@ -346,8 +362,22 @@ function handleFilterChange(key: string, value: string): void {
                   v-for="item in pieceStore.pieces"
                   :key="item.id"
                   :value="item.id"
+                  :disabled="!pieceStore.progressOf(item.id).allDone"
                   :label="`${item.name} · ${item.craft} · 壁厚 ${item.wallThicknessMm} mm`"
-                />
+                >
+                  <span>{{ item.name }} · {{ item.craft }} · 壁厚 {{ item.wallThicknessMm }} mm</span>
+                  <span
+                    :style="{ float: 'right', color: pieceStore.progressOf(item.id).allDone ? '#67c23a' : '#909399', fontSize: '12px' }"
+                  >
+                    {{
+                      pieceStore.progressOf(item.id).total === 0
+                        ? '无工序，不可排位'
+                        : pieceStore.progressOf(item.id).allDone
+                          ? '工序已完成'
+                          : `卡在第 ${pieceStore.progressOf(item.id).currentSeq} 道`
+                    }}
+                  </span>
+                </el-option>
               </el-select>
             </el-form-item>
           </el-col>
@@ -398,7 +428,15 @@ function handleFilterChange(key: string, value: string): void {
         </el-form-item>
 
         <el-alert
-          v-if="conflict.conflict"
+          v-if="stepGate.blocked"
+          type="error"
+          show-icon
+          :closable="false"
+          title="工序未按顺序完成，不能安排退火窑位"
+          :description="stepGate.reason"
+        />
+        <el-alert
+          v-else-if="conflict.conflict"
           type="error"
           show-icon
           :closable="false"
@@ -410,13 +448,18 @@ function handleFilterChange(key: string, value: string): void {
           type="success"
           show-icon
           :closable="false"
-          title="窑位可用，可以提交"
+          title="工序已全部完成，窑位可用，可以提交"
           :description="`当前曲线段「${form.curveSeg}」理论时长 ${formDuration.segment}，该作品全流程退火 ${formDuration.total}。${formDuration.hint}`"
         />
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" :disabled="conflict.conflict" @click="handleSubmit">
+        <el-button
+          type="primary"
+          :loading="submitting"
+          :disabled="stepGate.blocked || conflict.conflict"
+          @click="handleSubmit"
+        >
           保存
         </el-button>
       </template>

@@ -61,17 +61,19 @@ export async function seedDatabase(): Promise<void> {
     wrap<Piece>({ id: SEED_IDS.pieceCup, name: '赤霞杯', batchId: SEED_IDS.batchAmber, designHeightMm: 95, wallThicknessMm: 3.5, craft: '吹制', artist: '沈沐', state: '已退火' }),
   ]
 
-  // ---------------- 吹制工序（每件 2–5 道，seq 连续） ----------------
+  // ---------------- 吹制工序（每件 2–5 道，seq 连续；状态恒为已完成前缀） ----------------
   const steps: Step[] = [
     wrap<Step>({ id: 'step-m1', pieceId: SEED_IDS.pieceMorning, seq: 1, name: '取料', tempC: 1180, durationMin: 3.5, operator: '林曦', remark: '取 G-101 料液约 6.2 kg', state: '已完成' }),
     wrap<Step>({ id: 'step-m2', pieceId: SEED_IDS.pieceMorning, seq: 2, name: '吹制', tempC: 1120, durationMin: 6, operator: '林曦', remark: '分三次吹气成型', state: '已完成' }),
-    wrap<Step>({ id: 'step-m3', pieceId: SEED_IDS.pieceMorning, seq: 3, name: '塑形', tempC: 980, durationMin: 8.5, operator: '沈沐', remark: '夹持颈部收细', state: '进行中' }),
-    wrap<Step>({ id: 'step-m4', pieceId: SEED_IDS.pieceMorning, seq: 4, name: '收口', tempC: 860, durationMin: 4, operator: '林曦', remark: '口沿回火处理', state: '未开始' }),
+    wrap<Step>({ id: 'step-m3', pieceId: SEED_IDS.pieceMorning, seq: 3, name: '塑形', tempC: 980, durationMin: 8.5, operator: '沈沐', remark: '夹持颈部收细', state: '已完成' }),
+    wrap<Step>({ id: 'step-m4', pieceId: SEED_IDS.pieceMorning, seq: 4, name: '收口', tempC: 860, durationMin: 4, operator: '林曦', remark: '口沿回火处理', state: '已完成' }),
     wrap<Step>({ id: 'step-g1', pieceId: SEED_IDS.pieceGreen, seq: 1, name: '取料', tempC: 1120, durationMin: 4, operator: '沈沐', remark: '取 C-330 料液约 9.5 kg', state: '已完成' }),
     wrap<Step>({ id: 'step-g2', pieceId: SEED_IDS.pieceGreen, seq: 2, name: '开模', tempC: 940, durationMin: 12, operator: '沈沐', remark: '石膏模浇注', state: '已完成' }),
     wrap<Step>({ id: 'step-g3', pieceId: SEED_IDS.pieceGreen, seq: 3, name: '塑形', tempC: 900, durationMin: 9, operator: '郑野', remark: '修整碗口与底足', state: '已完成' }),
     wrap<Step>({ id: 'step-p1', pieceId: SEED_IDS.piecePaperweight, seq: 1, name: '取料', tempC: 1160, durationMin: 2.5, operator: '郑野', remark: '取 A-207 料液约 3.1 kg', state: '已完成' }),
     wrap<Step>({ id: 'step-p2', pieceId: SEED_IDS.piecePaperweight, seq: 2, name: '塑形', tempC: 1020, durationMin: 7, operator: '郑野', remark: '压制成型后回火', state: '进行中' }),
+    wrap<Step>({ id: 'step-p3', pieceId: SEED_IDS.piecePaperweight, seq: 3, name: '开模', tempC: 920, durationMin: 5, operator: '郑野', remark: '等待脱模检查', state: '未开始' }),
+    wrap<Step>({ id: 'step-p4', pieceId: SEED_IDS.piecePaperweight, seq: 4, name: '收口', tempC: 850, durationMin: 3, operator: '沈沐', remark: '底面封圆回火', state: '未开始' }),
     wrap<Step>({ id: 'step-b1', pieceId: SEED_IDS.pieceBottle, seq: 1, name: '取料', tempC: 1170, durationMin: 3, operator: '林曦', remark: '取 T-045 料液约 7.8 kg', state: '已完成' }),
     wrap<Step>({ id: 'step-b2', pieceId: SEED_IDS.pieceBottle, seq: 2, name: '吹制', tempC: 1110, durationMin: 7.5, operator: '林曦', remark: '长颈一次吹成', state: '已完成' }),
     wrap<Step>({ id: 'step-b3', pieceId: SEED_IDS.pieceBottle, seq: 3, name: '塑形', tempC: 990, durationMin: 10, operator: '沈沐', remark: '拉长颈部至 340 mm', state: '已完成' }),

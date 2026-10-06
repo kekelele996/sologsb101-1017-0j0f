@@ -12,6 +12,7 @@ import type { Piece, PieceState } from '../types/piece'
 import type { Step } from '../types/step'
 import type { Anneal } from '../types/anneal'
 import type { Inspect } from '../types/inspect'
+import type { StepState } from '../types/step'
 import { nowIso } from './id'
 import { seedDatabase } from './seed'
 
@@ -19,7 +20,7 @@ import { seedDatabase } from './seed'
 export const DB_NAME = 'gbglassblow'
 
 /** 当前数据结构版本号（每次调整字段结构必须 +1 并补迁移） */
-export const DB_SCHEMA_VERSION = 2
+export const DB_SCHEMA_VERSION = 3
 
 /** 数据行结构修订号 */
 export const ROW_REVISION = 2
@@ -93,6 +94,35 @@ class GlassBlowDatabase extends Dexie {
           if (typeof row.defectNote !== 'string') row.defectNote = ''
         })
       })
+
+    // ---------- v3：工序按顺序推进，自愈存量数据的越序「已完成」 ----------
+    this.version(DB_SCHEMA_VERSION).upgrade(async (tx) => {
+      // 已完成工序必须构成序号前缀；越序标记退回「未开始」，由操作人按顺序重新确认
+      const allSteps = await tx.table('steps').toCollection().toArray()
+      const byPiece = new Map<string, Array<Record<string, unknown>>>()
+      for (const row of allSteps as Array<Record<string, unknown>>) {
+        const key = String(row.pieceId ?? '')
+        const group = byPiece.get(key)
+        if (group === undefined) {
+          byPiece.set(key, [row])
+        } else {
+          group.push(row)
+        }
+      }
+      for (const group of byPiece.values()) {
+        group.sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0))
+        let prefixOpen = false
+        for (const row of group) {
+          if (row.state !== '已完成') {
+            prefixOpen = true
+          } else if (prefixOpen) {
+            row.state = '未开始'
+            row.updatedAt = nowIso()
+          }
+        }
+      }
+      await tx.table('steps').bulkPut(allSteps)
+    })
   }
 }
 
@@ -231,16 +261,73 @@ export async function removeStep(id: string): Promise<void> {
   await syncPieceState(step.pieceId)
 }
 
-/** 按给定 id 顺序重写工序序号（拖拽排序后调用） */
-export async function reorderSteps(orderedIds: string[]): Promise<void> {
+/**
+ * 按给定 id 顺序重写工序序号（拖拽排序后调用）。
+ * resetIds 中的工序（已完成却被甩到未完成工序之后）同步退回「未开始」，
+ * 保证「已完成」始终是新顺序的严格前缀，完成度与退火放行都以归一化后的状态为准。
+ */
+export async function reorderSteps(orderedIds: string[], resetIds: string[] = []): Promise<void> {
   await db.transaction('rw', db.steps, async () => {
+    const resetSet = new Set(resetIds)
     for (let index = 0; index < orderedIds.length; index += 1) {
-      await db.steps.update(orderedIds[index], { seq: index + 1, updatedAt: nowIso() })
+      const id = orderedIds[index]
+      await db.steps.update(id, {
+        seq: index + 1,
+        ...(resetSet.has(id) ? { state: '未开始' as StepState } : {}),
+        updatedAt: nowIso(),
+      })
     }
   })
 }
 
+/** 把指定工序批量退回「未开始」（不改变序号；状态归一化时使用） */
+export async function resetStepsState(ids: string[]): Promise<void> {
+  if (ids.length === 0) return
+  await db.transaction('rw', db.steps, async () => {
+    for (const id of ids) {
+      await db.steps.update(id, { state: '未开始' as StepState, updatedAt: nowIso() })
+    }
+  })
+}
+
+/**
+ * 按「已完成必须是严格前缀」归一化某作品全部工序的状态。
+ * 新增 / 编辑工序后调用：已完成道次一旦前面出现未完成道次，即退回「未开始」，
+ * 使完成度、当前道次与退火放行始终与新顺序一致。返回被退回的工序数。
+ */
+export async function normalizeStepStates(pieceId: string): Promise<number> {
+  let resetCount = 0
+  await db.transaction('rw', db.steps, async () => {
+    const list = await db.steps.where('pieceId').equals(pieceId).toArray()
+    list.sort((a, b) => a.seq - b.seq)
+    let prefixOpen = false
+    for (const row of list) {
+      if (row.state !== '已完成') {
+        prefixOpen = true
+      } else if (prefixOpen) {
+        await db.steps.update(row.id, { state: '未开始' as StepState, updatedAt: nowIso() })
+        resetCount += 1
+      }
+    }
+  })
+  return resetCount
+}
+
 /* -------------------------------- 退火 -------------------------------- */
+
+/**
+ * 退火排位准入：返回某作品的工序阻断原因（空串表示工序全部完成，可以排位）。
+ * 工序必须按顺序形成已完成前缀；第一道未完成工序即停滞点。
+ */
+export async function getStepGateReason(pieceId: string): Promise<string> {
+  const list = await db.steps.where('pieceId').equals(pieceId).toArray()
+  list.sort((a, b) => a.seq - b.seq)
+  if (list.length === 0) return '尚未登记任何吹制工序'
+  const firstUnfinished = list.findIndex((row) => row.state !== '已完成')
+  if (firstUnfinished < 0) return ''
+  const current = list[firstUnfinished]
+  return `停在第 ${current.seq} 道「${current.name}」（当前状态：${current.state}），需按顺序先完成前 ${current.seq} 道工序`
+}
 
 export async function listAnneals(): Promise<Anneal[]> {
   const rows = await db.anneals.toArray()

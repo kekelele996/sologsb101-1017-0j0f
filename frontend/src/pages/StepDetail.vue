@@ -143,8 +143,8 @@ async function handleDelete(row: Step): Promise<void> {
 }
 
 async function handleAdvance(row: Step): Promise<void> {
-  await pieceStore.advanceStep(row.id)
-  ElMessage.success(pieceStore.lastMessage)
+  const ok = await pieceStore.advanceStep(row.id)
+  ElMessage[ok ? 'success' : 'warning'](pieceStore.lastMessage)
 }
 
 async function handleDrop(targetId: string): Promise<void> {
@@ -292,6 +292,12 @@ function goAnnealing(): void {
                   {{ row.state }}
                 </el-tag>
                 <el-tag v-if="currentStep?.id === row.id" size="small" type="danger" effect="dark">当前道次</el-tag>
+                <el-tag
+                  v-else-if="row.state !== '已完成'"
+                  size="small"
+                  type="info"
+                  effect="plain"
+                >前序未完成</el-tag>
               </div>
               <div class="step-sub">
                 {{ row.tempC }} ℃ · {{ row.durationMin }} 分钟 · 操作人 {{ row.operator }}
