@@ -60,6 +60,10 @@ const slotOptions = computed<string[]>(() => {
   return list
 })
 
+/** 当前表单作品的工序进度；未完成全部工序时禁止编排窑位 */
+const formProgress = computed(() => pieceStore.progressOf(form.pieceId))
+const stepBlocked = computed(() => form.pieceId !== '' && !formProgress.value.allDone)
+
 /** 当前表单的窑位冲突检测结果，冲突时禁用提交 */
 const conflict = computed(() =>
   annealStore.conflictOf({
@@ -125,6 +129,10 @@ async function handleSubmit(): Promise<void> {
   if (formRef.value === undefined) return
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
+  if (stepBlocked.value) {
+    ElMessage.error(`无法分配窑位：${formProgress.value.blockReason}`)
+    return
+  }
   if (conflict.value.conflict) {
     ElMessage.error(conflict.value.message)
     return
@@ -346,7 +354,7 @@ function handleFilterChange(key: string, value: string): void {
                   v-for="item in pieceStore.pieces"
                   :key="item.id"
                   :value="item.id"
-                  :label="`${item.name} · ${item.craft} · 壁厚 ${item.wallThicknessMm} mm`"
+                  :label="`${item.name} · ${item.craft} · 壁厚 ${item.wallThicknessMm} mm${pieceStore.progressOf(item.id).allDone ? '' : ' · 工序未完成'}`"
                 />
               </el-select>
             </el-form-item>
@@ -398,7 +406,15 @@ function handleFilterChange(key: string, value: string): void {
         </el-form-item>
 
         <el-alert
-          v-if="conflict.conflict"
+          v-if="stepBlocked"
+          type="error"
+          show-icon
+          :closable="false"
+          title="该作品还有工序未完成，不能分配窑位"
+          :description="`停在${formProgress.blockReason}。请先在「吹制工序」页按顺序把每一道推进到「已完成」，再回来编排窑位。`"
+        />
+        <el-alert
+          v-else-if="conflict.conflict"
           type="error"
           show-icon
           :closable="false"
@@ -416,7 +432,7 @@ function handleFilterChange(key: string, value: string): void {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" :disabled="conflict.conflict" @click="handleSubmit">
+        <el-button type="primary" :loading="submitting" :disabled="stepBlocked || conflict.conflict" @click="handleSubmit">
           保存
         </el-button>
       </template>

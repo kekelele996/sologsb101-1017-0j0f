@@ -62,17 +62,12 @@ export function buildStepProgress(pieceId: string, steps: Step[]): StepProgress 
   const inProgress = list.filter((row) => row.state === '进行中').length
   const pending = list.filter((row) => row.state === '未开始').length
   const current = list.find((row) => row.state !== '已完成') ?? null
-  const firstUnfinishedIndex = list.findIndex((row) => row.state !== '已完成')
 
-  // 任一前序未完成即阻断进入退火排位
-  let blockReason = ''
-  if (done < list.length) {
-    const blockedBy = list.slice(0, firstUnfinishedIndex).find((row) => row.state !== '已完成')
-    blockReason =
-      blockedBy === undefined
-        ? `第 ${current?.seq ?? list.length} 道「${current?.name ?? '未命名'}」尚未完成（当前状态：${current?.state ?? '未开始'}）`
-        : `前序第 ${blockedBy.seq} 道「${blockedBy.name}」未完成，不能进入退火排位`
-  }
+  // 任一前序未完成即阻断进入退火排位；阻断原因报出停在哪一道
+  const blockReason =
+    current === null
+      ? ''
+      : `第 ${current.seq} 道「${current.name}」尚未完成（当前状态：${current.state}）`
 
   return {
     pieceId,

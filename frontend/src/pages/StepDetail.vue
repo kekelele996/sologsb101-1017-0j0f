@@ -143,8 +143,8 @@ async function handleDelete(row: Step): Promise<void> {
 }
 
 async function handleAdvance(row: Step): Promise<void> {
-  await pieceStore.advanceStep(row.id)
-  ElMessage.success(pieceStore.lastMessage)
+  const ok = await pieceStore.advanceStep(row.id)
+  ElMessage[ok ? 'success' : 'error'](pieceStore.lastMessage)
 }
 
 async function handleDrop(targetId: string): Promise<void> {

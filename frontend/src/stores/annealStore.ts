@@ -13,9 +13,11 @@ import {
   advanceAnnealState,
   db,
   initDatabase,
+  listStepsByPiece,
   putAnneal,
   removeAnneal,
 } from '../utils/db'
+import { buildStepProgress } from '../hooks/useStepProgress'
 import {
   checkSlotConflict,
   formatHours,
@@ -174,7 +176,22 @@ export const useAnnealStore = defineStore('anneal', () => {
     Object.assign(filters, { ...EMPTY_FILTERS })
   }
 
+  /**
+   * 工序门禁：作品还有工序未完成时不允许编排窑位。
+   * 返回空串表示放行，否则返回阻断原因（停在哪一道）。
+   */
+  async function stepGateBlockReason(pieceId: string): Promise<string> {
+    const stepRows = await listStepsByPiece(pieceId)
+    const progress = buildStepProgress(pieceId, stepRows)
+    return progress.allDone ? '' : progress.blockReason
+  }
+
   async function createAnneal(draft: AnnealDraft): Promise<Anneal | null> {
+    const blocked = await stepGateBlockReason(draft.pieceId)
+    if (blocked !== '') {
+      lastMessage.value = `无法分配窑位：${blocked}，请先在吹制工序页按顺序完成全部工序`
+      return null
+    }
     const conflict = conflictOf({
       id: '',
       kilnSlot: draft.kilnSlot,
@@ -207,6 +224,11 @@ export const useAnnealStore = defineStore('anneal', () => {
   }
 
   async function updateAnneal(annealId: string, draft: AnnealDraft): Promise<boolean> {
+    const blocked = await stepGateBlockReason(draft.pieceId)
+    if (blocked !== '') {
+      lastMessage.value = `无法更新退火编排：${blocked}，请先在吹制工序页按顺序完成全部工序`
+      return false
+    }
     const conflict = conflictOf({
       id: annealId,
       kilnSlot: draft.kilnSlot,

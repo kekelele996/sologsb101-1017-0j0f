@@ -231,13 +231,28 @@ export async function removeStep(id: string): Promise<void> {
   await syncPieceState(step.pieceId)
 }
 
-/** 按给定 id 顺序重写工序序号（拖拽排序后调用） */
-export async function reorderSteps(orderedIds: string[]): Promise<void> {
+/**
+ * 按给定顺序重写工序序号（拖拽排序后调用）。
+ * 顺序约束：「已完成」只允许构成序列前缀；被排到未完成工序之后的已完成工序
+ * 一律退回「未开始」等待重新记录，与序号重写在同一事务内落库。
+ * 返回被退回的工序（按新序号升序），调用方可据此提示操作人。
+ */
+export async function reorderSteps(ordered: Step[]): Promise<Step[]> {
+  const firstUnfinished = ordered.findIndex((row) => row.state !== '已完成')
+  const reverted: Step[] = []
   await db.transaction('rw', db.steps, async () => {
-    for (let index = 0; index < orderedIds.length; index += 1) {
-      await db.steps.update(orderedIds[index], { seq: index + 1, updatedAt: nowIso() })
+    for (let index = 0; index < ordered.length; index += 1) {
+      const row = ordered[index]
+      const revert = firstUnfinished >= 0 && index > firstUnfinished && row.state === '已完成'
+      await db.steps.update(row.id, {
+        seq: index + 1,
+        ...(revert ? { state: '未开始' as Step['state'] } : {}),
+        updatedAt: nowIso(),
+      })
+      if (revert) reverted.push(row)
     }
   })
+  return reverted
 }
 
 /* -------------------------------- 退火 -------------------------------- */

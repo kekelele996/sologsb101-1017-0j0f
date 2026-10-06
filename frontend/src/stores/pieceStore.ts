@@ -236,15 +236,27 @@ export const usePieceStore = defineStore('piece', () => {
     lastMessage.value = '工序已删除，作品状态已重新推导'
   }
 
-  /** 推进工序状态：未开始 → 进行中 → 已完成 */
-  async function advanceStep(stepId: string): Promise<void> {
+  /**
+   * 推进工序状态：未开始 → 进行中 → 已完成。
+   * 顺序约束：排在该道之前的工序必须全部「已完成」，否则本次推进被退回，
+   * lastMessage 写清卡在第几道；返回是否推进成功。
+   */
+  async function advanceStep(stepId: string): Promise<boolean> {
     const existing = steps.value.find((row) => row.id === stepId)
-    if (existing === undefined) return
+    if (existing === undefined) return false
     const flow: Step['state'][] = ['未开始', '进行中', '已完成']
     const index = flow.indexOf(existing.state)
     if (index < 0 || index >= flow.length - 1) {
       lastMessage.value = '该工序已处于「已完成」状态'
-      return
+      return false
+    }
+    // 顺序闸：前序道次未全部完成时，本道不允许推进
+    const ordered = stepsOf(existing.pieceId)
+    const position = ordered.findIndex((row) => row.id === stepId)
+    const blocker = ordered.slice(0, position).find((row) => row.state !== '已完成')
+    if (blocker !== undefined) {
+      lastMessage.value = `无法推进第 ${existing.seq} 道「${existing.name}」：卡在前序第 ${blocker.seq} 道「${blocker.name}」（当前状态：${blocker.state}），请先按顺序完成前面的工序`
+      return false
     }
     const next = flow[index + 1]
     await putStep({ ...existing, state: next })
@@ -253,9 +265,17 @@ export const usePieceStore = defineStore('piece', () => {
     lastMessage.value = `第 ${existing.seq} 道「${existing.name}」已推进为「${next}」${
       piece === undefined ? '' : `（作品：${piece.name}）`
     }`
+    return true
   }
 
-  /** 拖拽排序：把 fromId 移动到 toId 之前 */
+  /** 拖拽退回说明：被排到未完成工序之后的已完成道次已退回「未开始」 */
+  function revertNote(reverted: Step[]): string {
+    if (reverted.length === 0) return ''
+    const names = reverted.map((row) => `「${row.name}」`).join('、')
+    return `；${names} 被排到未完成工序之后，已退回「未开始」等待重新记录`
+  }
+
+  /** 拖拽排序：把 fromId 移动到 toId 之前；序号、完成度与当前道次按新顺序重算 */
   async function moveStepBefore(pieceId: string, fromId: string, toId: string): Promise<void> {
     if (fromId === toId) return
     const list = stepsOf(pieceId)
@@ -264,12 +284,12 @@ export const usePieceStore = defineStore('piece', () => {
     if (fromIndex < 0 || toIndex < 0) return
     const [moved] = list.splice(fromIndex, 1)
     list.splice(toIndex, 0, moved)
-    await reorderSteps(list.map((row) => row.id))
+    const reverted = await reorderSteps(list)
     revision.value += 1
-    lastMessage.value = `已调整工序顺序：「${moved.name}」移动到第 ${toIndex + 1} 道`
+    lastMessage.value = `已调整工序顺序：「${moved.name}」移动到第 ${toIndex + 1} 道${revertNote(reverted)}`
   }
 
-  /** 按序号升序重排（拖拽置顶/置底等场景） */
+  /** 按序号升序重排（拖拽置顶/置底等场景）；同样触发已完成道次的退回校验 */
   async function moveStepToIndex(pieceId: string, stepId: string, targetIndex: number): Promise<void> {
     const list = stepsOf(pieceId)
     const fromIndex = list.findIndex((row) => row.id === stepId)
@@ -277,9 +297,9 @@ export const usePieceStore = defineStore('piece', () => {
     const [moved] = list.splice(fromIndex, 1)
     const index = Math.max(0, Math.min(list.length, targetIndex))
     list.splice(index, 0, moved)
-    await reorderSteps(list.map((row) => row.id))
+    const reverted = await reorderSteps(list)
     revision.value += 1
-    lastMessage.value = `已把「${moved.name}」调整到第 ${index + 1} 道`
+    lastMessage.value = `已把「${moved.name}」调整到第 ${index + 1} 道${revertNote(reverted)}`
   }
 
   /** 依工序与退火记录重新推导作品状态 */
